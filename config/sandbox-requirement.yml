@@ -1,0 +1,11 @@
+- glibc
+- dejavu-fonts
+- findutils
+- gtk2
+- ModemManager
+- vlc
+- systemtap
+- spidermonkey
+- thunderbird
+- icedtea-web-java7
+- gpgme
