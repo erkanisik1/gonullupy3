@@ -54,10 +54,7 @@ class Log:
             print(Fore.YELLOW + '  [!] Uyarı: ' + message + Style.RESET_ALL)
 
     @staticmethod
-    def get_exit(self):
-        # Burada çıkış yapmadan önce bir kontrol ekleyelim
-        if self.last_output_type != 'error':
-            print("Programdan çıkılıyor.")
+    def get_exit():
         sys.exit()
 
     def blank_line(self):

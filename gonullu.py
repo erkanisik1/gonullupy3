@@ -4,11 +4,11 @@ import os
 import signal
 import sys
 import traceback
-import subprocess
-import time
+
 from log import Log
 from farm import Farm
 from volunteer import Volunteer
+
 
 
 def usage():
@@ -16,118 +16,46 @@ def usage():
 Kullanim - Usage
 Asagidaki satir, docker icindeki /etc/pisi/pisi.conf icinde bulunan
 -j parametresini verecegimiz rakam ile degistirir.
-\tgonullu -j 24
+\tsudo gonullu -j 24
 Asagidaki satir, docker icin islemcinin %70'ini, fiziksel hafizanin
 %25'ini  ayirir.
-\tgonullu --cpu=70 --memory=25
+\tsudo gonullu --cpu=70 --memory=25
 """)
     sys.exit()
 
 
-def get_sudo_password():
-    """Kullanıcıdan sudo şifresini al"""
-    import getpass
-    try:
-        return getpass.getpass('Sudo şifresini girin: ')
-    except KeyboardInterrupt:
-        print("\nProgram sonlandırılıyor...")
-        sys.exit(0)
-
-
-def run_with_sudo():
-    """Programı sudo ile yeniden başlat"""
-    if os.geteuid() != 0:  # Root değilsek
-        try:
-            password = get_sudo_password()
-            # Programı sudo ile yeniden başlat
-            cmd = ['sudo', '-S', sys.executable] + sys.argv
-            process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-            process.communicate(password.encode())
-            sys.exit(process.returncode)
-        except KeyboardInterrupt:
-            print("\nProgram sonlandırılıyor...")
-            sys.exit(0)
-        except Exception as e:
-            print(f"\nHata oluştu: {str(e)}")
-            sys.exit(1)
-
-
-def main(log, volunteer, farm):
-    try:
-        # Farm nesnesini volunteer'a bağla
-        volunteer.farm = farm
-        farm.set_volunteer(volunteer)
-
-        while True:
-            try:
-                # Paket al
-                response = volunteer.get_package_farm()
-                
-                if response == -1:
-                    log.error('Paket alınamadı!')
-                    time.sleep(10)
-                    continue
-                    
-                if response == -2:
-                    log.information('Yeni paket bekleniyor...')
-                    time.sleep(20)
-                    continue
-
-                # Paket işleme
-                package = response.get('package')
-                if not package:
-                    log.error('Paket adı bulunamadı!')
-                    continue
-
-                # Paket dizinini kontrol et
-                package_dir = f'/tmp/gonullu/{package}'
-                if not os.path.exists(package_dir):
-                    log.error(f'Paket dizini bulunamadı: {package_dir}')
-                    continue
-
-                # .bitti dosyasını bekle
-                bitti_file = os.path.join(package_dir, f'{package}.bitti')
-                while not os.path.exists(bitti_file):
-                    log.information('Derleme işlemi devam ediyor...')
-                    time.sleep(30)
-
-                # Dosyaları gönder
-                try:
-                    if farm.send_file(package, response.get('binary_repo_dir', '')):
-                        log.success(f'Paket başarıyla gönderildi: {package}')
-                    else:
-                        log.error(f'Paket gönderimi başarısız: {package}')
-                except Exception as e:
-                    log.error(f'Dosya gönderimi sırasında hata: {str(e)}')
-
-                # Temizlik
-                try:
-                    volunteer.cleanup()
-                except Exception as e:
-                    log.error(f'Temizlik sırasında hata: {str(e)}')
-
-            except Exception as e:
-                log.error(f'Paket işleme hatası: {str(e)}')
-                time.sleep(10)
-
-    except KeyboardInterrupt:
-        log.information('Program sonlandırılıyor...')
-    except Exception as e:
-        log.error(f'Bilinmeyen bir hata ile karşılaşıldı: {str(e)}')
-        import traceback
-        log.error(traceback.format_exc())
-    finally:
-        # Son temizlik
-        try:
-            volunteer.cleanup()
-        except:
-            pass
+def main(log_main, volunteer_main, farm_main):
+    while 1:
+        response = farm_main.get_package()
+        if (response == -1) or (response ==  -2):
+            if response == -1:
+                farm_main.wait(message='dir yeni paket bekleniyor.')
+        else:
+            volunteer_main.get_package_farm(response)
+            while 1:
+                if volunteer_main.check():
+                    # container bulunamadı. İşlem bitti.
+                    if farm_main.send_file(response['package'], response['binary_repo_dir']):
+                        success = int(open('/tmp/gonullu/%s/%s.bitti' % (response['package'],
+                                                                         response['package']), 'r').read())
+                        farm_main.get('updaterunning?id=%s&state=%s' % (response['queue_id'], success), json=False)
+                        volunteer_main.remove()
+                        log_main.success(
+                            message='derleme işlemi %s paketi için %s saniyede bitti.' % (response['package'],
+                                                                                          farm_main.get_total_time())
+                        )
+                        log_main.blank_line()
+                        farm_main.wait(reset=True)
+                    break
+                else:
+                    # container bulundu. İşlem sürüyor.
+                    farm_main.wait(message='den beri derleme işlemi %s paketi için devam ediyor.' % response['package'])
 
 
 if __name__ == "__main__":
     log = Log()
 
-    # Sinyal yönetimini ayarla
+        # Sinyal yönetimini ayarla
     def signal_handler(signum, frame):
         print("\nProgram sonlandırılıyor...")
         sys.exit(0)
@@ -147,8 +75,9 @@ if __name__ == "__main__":
     if args.usage:
         usage()
 
-    # Sudo kontrolü ve şifre sorma
-    run_with_sudo()
+    if os.getgid() != 0:
+        log.error('Lütfen programı yönetici(sudo) olarak çalıştırınız.')
+        log.get_exit()
 
     docker_socket_file = '/var/run/docker.sock'
     if not os.path.exists(docker_socket_file):
@@ -161,10 +90,24 @@ if __name__ == "__main__":
 
     print(args)
 
-    #farm = Farm('https://ciftlik.pisilinux.org', args.email)
+    #farm = Farm('https://ciftlik.pisilinux.org/ciftlik', args.email)
     farm = Farm('http://31.207.82.178/', args.email)
     volunteer = Volunteer(args)
-
+    """
+    # CTRL+C call_exit'e yönlendirildi. Bu sayede çalışan container silinecek ve öyle çıkış yapılacak.
+    signal.signal(signal.SIGINT, volunteer.exit_signal)
+    # CTRL+Z sinyali iptal edildi.
+    signal.signal(signal.SIGTSTP, signal.SIG_IGN)
+    try:
+        os.system("stty -echo")
+        main(log, volunteer, farm)
+    except:
+      log.error('Bilinmeyen bir hata ile karşılaşıldı: %s' % ( traceback.format_exc() ))
+    finally:
+        log.error('Programdan çıkılıyor.')
+        os.system("stty echo")
+        sys.exit(0)
+    """
     try:
         os.system("stty -echo")
         main(log, volunteer, farm)

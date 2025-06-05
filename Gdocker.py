@@ -10,103 +10,72 @@ from log import Log
 
 
 class Docker:
-    def __init__(self, parameters=None, name=None):
+    def __init__(self, parameters=None):
         self.log = Log()
-        self.name = name
-        self.memory_limit = self.set_memory_limit(parameters.memory_limit if parameters else 50)
+        self.name = None
+        self.memory_limit = self.set_memory_limit(parameters.memory_limit)
         self.binds = {}
         self.volumes = []
         self.package_name = None
         self.image = None
-        self.cpu_set = self.set_cpu_set(parameters.cpu_set if parameters else 1)
+        self.cpu_set = self.set_cpu_set(parameters.cpu_set)
         self.command = None
-        self.client = None  # Docker client'ı
+        self.my_client = None
         self.host_config = None
         self.my_container = None
         self.tmp_status = False
-        self.name = name
 
-        # Docker client'ı başlat
-        try:
-            self.client = APIClient(base_url='unix://var/run/docker.sock', version='1.35')
-            self.log.success("Docker client başarıyla başlatıldı")
-        except Exception as e:
-            self.log.error(f"Docker client başlatılamadı: {str(e)}")
-            raise
+    def start(self):
+        # containerımızı parametreleri ile çalıştıracağımız fonksiyonumuz.
+        if not self.my_client:
+            # my_client'de çalışan docker process'ini yakalıyorum.
+            self.my_client = APIClient(base_url='unix://var/run/docker.sock', version='1.35')
 
-    def start(self, name):
-        # Container'ı başlatma işlemleri...
-        if not self.name:
-            self.log.error("Container adı sağlanmadı!")
-            return False
+        # container'ımızın host configlerini yapalım.
+        self.host_config = self.my_client.create_host_config(mem_limit='%sM' % self.memory_limit, binds=self.binds, security_opt=['seccomp:unconfined'])
+        # hadi şimdi aynı isimle bir containerımız var mı görelim.
+        self.control_docker()
+        # kullanılacak imaj son sürüme yükseltelim
+        self.tmp_status = False
+        message = '%s imajı güncelleniyor' % self.image
+        for line in self.my_client.pull(self.image, stream=True):
+            line = json.loads(line.decode('UTF-8'))
+            if line['status'] == 'Downloading':
+                if self.tmp_status is False:
+                    self.log.information(message=message)
+                    self.tmp_status = True
+                print('  %s' % line['progress'], end='\r')
 
-        try:
-            # Docker client'ı oluştur
-            if not self.client:
-                self.client = APIClient(base_url='unix://var/run/docker.sock', version='1.35')
+        if self.tmp_status is True:
+            print('')
+            self.log.information(message='İmaj son sürüme güncellendi')
 
-            # Host config'i oluştur
-            self.host_config = self.client.create_host_config(
-                mem_limit='%sM' % self.memory_limit,
-                binds=self.binds,
-                security_opt=['seccomp:unconfined']
-            )
-
-            # Eski container'ı kontrol et ve temizle
-            self.control_docker()
-
-            # İmajı güncelle
-            self.tmp_status = False
-            message = '%s imajı güncelleniyor' % self.image
-            for line in self.client.pull(self.image, stream=True):
-                line = json.loads(line.decode('UTF-8'))
-                if line['status'] == 'Downloading':
-                    if self.tmp_status is False:
-                        self.log.information(message=message)
-                        self.tmp_status = True
-                    print('  %s' % line['progress'], end='\r')
-
-            if self.tmp_status is True:
-                print('')
-                self.log.information(message='İmaj son sürüme güncellendi')
-
-            # Container'ı oluştur
-            self.my_container = self.client.create_container(
-                image=self.image,
-                command=self.command,
-                name=self.name,
-                volumes=self.volumes,
-                host_config=self.host_config
-            )
-
-            # Container'ı başlat
-            self.client.start(self.name)
-            self.log.success(f"Container başarıyla başlatıldı: {self.name}")
-            return True
-
-        except Exception as e:
-            self.log.error(f"Container başlatma hatası: {str(e)}")
-            return False
+        # my_container ile konteynırımızı oluşturuyoruz ve onda saklıyoruz.
+        self.my_container = self.my_client.create_container(image=self.image, command=self.command, name=self.name,
+                                                            volumes=self.volumes,
+                                                            host_config=self.host_config)
+        # ve konteynırımızı çalıştırmaya başlıyoruz.
+        self.my_client.start(self.name)
 
     def pause(self):
         # containerımızı durdurmak için çalıştıracağımız fonksiyonumuz.
-        self.client.pause(self.name)
+        self.my_client.pause(self.name)
 
     def resume(self):
         # containerımızı devam ettirmek için çalıştıracağımız fonksiyonumuz.
-        self.client.unpause(self.name)
+        self.my_client.unpause(self.name)
 
     def stop(self):
         # konteynırımızda ki işlemi iptal etmek için çalıştıracağımız fonksiyonumuz.
-        self.client.stop(self.name)
+        self.my_client.stop(self.name)
 
     def remove(self):
         # containerımızı silecek fonksiyonumuz
-        state = self.client.inspect_container(self.name)
+        state = self.my_client.inspect_container(self.name)
         state = state['State']['Running']
         if state is True:
-            self.client.stop(self.name)
-        self.client.remove_container(self.name)
+            self.my_client.stop(self.name)
+        self.my_client.remove_container(self.name)
         self.volumes = []
         self.binds = {}
         self.name = None
@@ -116,56 +85,21 @@ class Docker:
             self.package_name = None
 
     def get_logs(self):
-        try:
-            if not self.client or not self.name:
-                return "Container logları alınamıyor."
-            
-            # Son 10 satır log'u al
-            logs = self.client.logs(
-                self.name,
-                tail=10,
-                timestamps=True,
-                stream=False
-            ).decode('utf-8')
-            
-            if not logs:
-                return "Henüz log oluşturulmadı."
-                
-            # Logları satır satır ayır ve son satırı döndür
-            log_lines = logs.strip().split('\n')
-            if log_lines:
-                return log_lines[-1]  # En son log satırını döndür
-            return "Log bulunamadı."
-            
-        except Exception as e:
-            return f"Log alınamadı: {str(e)}"
+        # burada oluşan log çıktılarımızı yakalayacağız.
+        self.my_client.logs(self.name)
 
     def set_name(self, name):
-        # Container adını güvenli bir şekilde oluştur
-        if not name:
-            self.log.error("Geçersiz paket adı!")
-            return False
-
+        # container adımızı atadığımız fonksiyonumuz.
+        dictionary = 'abcdefghijklmnopqrstuvxyzABCDEFGHIJKLMNOPQRSTUVXYZ-_1234567890'
+        dictionary_len = len(dictionary)
         self.package_name = name
-        # Docker container isimleri için güvenli karakterler
-        safe_chars = 'abcdefghijklmnopqrstuvxyzABCDEFGHIJKLMNOPQRSTUVXYZ-_1234567890'
-        
-        # İsmi güvenli hale getir
-        safe_name = ''
-        for char in name:
-            if char in safe_chars:
-                safe_name += char
-            else:
-                # Geçersiz karakteri rastgele güvenli bir karakterle değiştir
-                safe_name += random.choice(safe_chars)
-        
-        # İsim en az 2 karakter olmalı
-        if len(safe_name) < 2:
-            safe_name += '_' + random.choice(safe_chars)
-            
-        self.name = safe_name
-        self.log.information(f"Container adı oluşturuldu: {self.name}")
-        return True
+        self.name = ''
+        for i in name:
+            if i not in dictionary:
+                i = dictionary[random.randint(1, dictionary_len)]
+            self.name += str(i)
+        if len(self.name) == 1:
+            self.name += "_"
 
     @staticmethod
     def set_memory_limit(memory_limit):
@@ -192,7 +126,7 @@ class Docker:
 
     def check(self):
         # derleme işlemi devam ediyor mu kontrol edelim
-        for container in self.client.containers():
+        for container in self.my_client.containers():
             if container['Names'][0].replace('/', '') == self.name:
                 return 0
         else:
@@ -200,7 +134,7 @@ class Docker:
 
     def control_docker(self):
         # oluşacak paketin adı ile önceden docker kaydı var mı kontrol edelim.
-        for container in self.client.containers(all=True):
+        for container in self.my_client.containers(all=True):
             if container['Names'][0].replace('/', '') == self.name:
                 self.remove()
 
@@ -211,61 +145,3 @@ class Docker:
         self.log.blank_line()
         self.log.warning(message='CTRL+C\'ye tıkladınız!')
         self.log.get_exit()
-
-    def start_container(self, name, image, volumes=None, command=None):
-        """Container'ı başlatmak için yeni metod"""
-        try:
-            # Container adını ayarla
-            self.name = name
-            self.image = image
-            self.command = command
-
-            # Volume'ları ayarla
-            if volumes:
-                self.volumes = []
-                self.binds = {}
-                for local_path, volume_info in volumes.items():
-                    self.add_volume(local_path, volume_info['bind'])
-
-            # Host config'i oluştur
-            self.host_config = self.client.create_host_config(
-                mem_limit='%sM' % self.memory_limit,
-                binds=self.binds,
-                security_opt=['seccomp:unconfined']
-            )
-
-            # Eski container'ı kontrol et ve temizle
-            self.control_docker()
-
-            # İmajı güncelle
-            self.tmp_status = False
-            message = '%s imajı güncelleniyor' % self.image
-            for line in self.client.pull(self.image, stream=True):
-                line = json.loads(line.decode('UTF-8'))
-                if line['status'] == 'Downloading':
-                    if self.tmp_status is False:
-                        self.log.information(message=message)
-                        self.tmp_status = True
-                    print('  %s' % line['progress'], end='\r')
-
-            if self.tmp_status is True:
-                print('')
-                self.log.information(message='İmaj son sürüme güncellendi')
-
-            # Container'ı oluştur
-            self.my_container = self.client.create_container(
-                image=self.image,
-                command=self.command,
-                name=self.name,
-                volumes=self.volumes,
-                host_config=self.host_config
-            )
-
-            # Container'ı başlat
-            self.client.start(self.name)
-            self.log.success(f"Container başarıyla başlatıldı: {self.name}")
-            return self.my_container
-
-        except Exception as e:
-            self.log.error(f"Container başlatma hatası: {str(e)}")
-            raise
