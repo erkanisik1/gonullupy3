@@ -4,6 +4,8 @@ import os
 import signal
 import sys
 import traceback
+import yaml
+import getpass
 
 from log import Log
 from farm import Farm
@@ -22,6 +24,16 @@ Asagidaki satir, docker icin islemcinin %70'ini, fiziksel hafizanin
 \tsudo gonullu --cpu=70 --memory=25
 """)
     sys.exit()
+
+
+def get_saved_email():
+    config_file = os.path.join(os.path.dirname(__file__), 'config/mail_config.yml')
+    if os.path.exists(config_file):
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+            if config and config.get('is_verified'):
+                return config.get('email')
+    return None
 
 
 def main(log_main, volunteer_main, farm_main):
@@ -55,7 +67,7 @@ def main(log_main, volunteer_main, farm_main):
 if __name__ == "__main__":
     log = Log()
 
-        # Sinyal yönetimini ayarla
+    # Sinyal yönetimini ayarla
     def signal_handler(signum, frame):
         print("\nProgram sonlandırılıyor...")
         sys.exit(0)
@@ -67,7 +79,8 @@ if __name__ == "__main__":
     parser.add_argument('-k', '--kullanim', action="store_true", dest='usage', default=False)
     parser.add_argument('-m', '--memory', action='store', dest='memory_limit', default=50, type=int)
     parser.add_argument('-c', '--cpu', action='store', dest='cpu_set', default=1, type=int)
-    parser.add_argument('-e', '--email', action='store', dest='email', default='ilkermanap@gmail.com', type=str)
+    parser.add_argument('-e', '--email', action='store', dest='email', default=None, type=str)
+    parser.add_argument('-p', '--password', action='store', dest='password', default=None, type=str)
     parser.add_argument('-j', '--job', action='store', dest='job', default=5, type=int)
 
     args = parser.parse_args()
@@ -84,30 +97,27 @@ if __name__ == "__main__":
         log.error(message='Lütfen ilk önce docker servisini çalıştırınız!')
         log.get_exit()
 
-    if not args.email:
-        log.error(message='Lütfen bir mail adresi belirtiniz. (-e parametresi)')
-        log.get_exit()
+    # Mail adresi kontrolü
+    saved_email = get_saved_email()
+    if not args.email and not saved_email:
+        log.information('İlk kez çalıştırıyorsunuz. Lütfen mail adresinizi girin:')
+        email = input('Mail adresi: ').strip()
+       
+        if not email:
+            log.error('Mail adresi boş olamaz!')
+            log.get_exit()
+        args.email = email
+       
+    elif not args.email:
+        args.email = saved_email
+        log.information(f'Kayıtlı mail adresi kullanılıyor: {saved_email}')
 
-    print(args)
+    #print(args)
 
     #farm = Farm('https://ciftlik.pisilinux.org/ciftlik', args.email)
     farm = Farm('http://31.207.82.178/', args.email)
     volunteer = Volunteer(args)
-    """
-    # CTRL+C call_exit'e yönlendirildi. Bu sayede çalışan container silinecek ve öyle çıkış yapılacak.
-    signal.signal(signal.SIGINT, volunteer.exit_signal)
-    # CTRL+Z sinyali iptal edildi.
-    signal.signal(signal.SIGTSTP, signal.SIG_IGN)
-    try:
-        os.system("stty -echo")
-        main(log, volunteer, farm)
-    except:
-      log.error('Bilinmeyen bir hata ile karşılaşıldı: %s' % ( traceback.format_exc() ))
-    finally:
-        log.error('Programdan çıkılıyor.')
-        os.system("stty echo")
-        sys.exit(0)
-    """
+
     try:
         os.system("stty -echo")
         main(log, volunteer, farm)

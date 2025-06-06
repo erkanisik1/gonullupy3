@@ -1,17 +1,20 @@
 import glob
 import time
 import requests
+import yaml
+import os
 from log import Log
 
 
 class Farm:
     def __init__(self, farm_url, email):
         self.url = farm_url
-        self.email = self.mail_control(email)
+        self.email = email
         self.time = 10
         self.total_error_time = 10
         self.log = Log()
         self.total_time = 10
+        self.config_file = os.path.join(os.path.dirname(__file__), 'config/mail_config.yml')
 
     def get(self, request, json=True):
         # Get isteğini işleyip json data dönen fonksiyonumuz.
@@ -29,6 +32,8 @@ class Farm:
             self.total_error_time += 10
             self.total_time = 10
             return -2
+
+   
 
     def send_file(self, package, binary_path):
         # Oluşan çıktı dosyalarını çiftliğe gönderen fonksiyonumuz.
@@ -66,8 +71,12 @@ class Farm:
         try:
             with open(file, 'rb') as f:
                 files = {'file': f}
-                r = requests.post('%s/%s' % (self.url, 'upload'), files=files, data={'binrepopath': binary_path})
-                r.raise_for_status()  # HTTP hatalarını yakalamak için
+                # Timeout değerlerini artırıyoruz: (bağlantı timeout, okuma timeout)
+                r = requests.post('%s/%s' % (self.url, 'upload'), 
+                                files=files, 
+                                data={'binrepopath': binary_path},
+                                timeout=(60, 600))  # 30 saniye bağlantı, 300 saniye okuma timeout
+                r.raise_for_status()
                 hashx = self.sha1file(file)
 
                 file = file.split('/')[-1]
@@ -77,13 +86,52 @@ class Farm:
                 else:
                     self.log.error(message='%s dosyası gönderilemedi!' % file)
                     return False
+        except requests.exceptions.Timeout:
+            self.log.error(message='%s dosyası gönderilirken zaman aşımı oluştu! Daha uzun bir süre bekleyiniz.' % file)
+            return False
         except requests.exceptions.RequestException as e:
             self.log.error(message='%s dosyası gönderilemedi! Hata: %s' % (file, str(e)))
             return False
 
     def get_package(self):
-        request = '%s/%s' % ('requestPkg', self.email)
-        response = self.get(request)
+        # Mail adresini kontrol et
+        if not os.path.exists(self.config_file):
+            # Yapılandırma dosyası yoksa oluştur
+            config = {'email': None, 'is_verified': False}
+            with open(self.config_file, 'w') as f:
+                yaml.dump(config, f)
+
+        # Yapılandırma dosyasını oku
+        with open(self.config_file, 'r') as f:
+            config = yaml.safe_load(f)
+
+        # Eğer mail adresi doğrulanmışsa ve aynı mail adresi kullanılıyorsa
+        if config.get('is_verified') and config.get('email') == self.email:
+            request = '%s/%s' % ('requestPkg', self.email)
+            response = self.get(request)
+        else:
+            # Mail adresini doğrula
+            request = '%s/%s' % ('requestPkg', self.email)
+            response = self.get(request)
+
+            if response == -2:
+                time.sleep(self.time)
+                self.total_time += self.time
+                return -2
+
+            if response['state'] == 402:
+                # Mail adresi doğrulandı, yapılandırma dosyasını güncelle
+                config['email'] = self.email
+                config['is_verified'] = True
+                with open(self.config_file, 'w') as f:
+                    yaml.dump(config, f)
+                self.log.success('Mail adresi başarıyla doğrulandı.')
+            elif response['state'] == 401:
+                self.log.error(message='Mail adresiniz yetkili değil!')
+                self.log.get_exit()
+            else:
+                self.log.error(message='Mail adresi doğrulanamadı!')
+                self.log.get_exit()
 
         if response == -1:
             return -1
@@ -138,12 +186,6 @@ class Farm:
     def complete_process(self):
         # Uygulama çalışması bitince çalışacak olan prosedür fonksiyonumuz.
         pass
-
-    @staticmethod
-    def mail_control(email):
-        # Mail adresimiz onaylı mı diye kontrol eden fonksiyonumuz.
-        # TODO: İlker abiden mail adresi onaylı mı diye istek yapabileceğimiz bir url isteyeceğiz.
-        return email
 
     @staticmethod
     def sha1file(filepath):
