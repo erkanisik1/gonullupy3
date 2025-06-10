@@ -119,13 +119,19 @@ class Farm:
                 self.total_time += self.time
                 return -2
 
-            if response['state'] == 402:
+            if response['state'] == 200:
                 # Mail adresi doğrulandı, yapılandırma dosyasını güncelle
                 config['email'] = self.email
                 config['is_verified'] = True
                 with open(self.config_file, 'w') as f:
                     yaml.dump(config, f)
                 self.log.success('Mail adresi başarıyla doğrulandı.')
+            elif response['state'] == 402:
+                config['email'] = self.email
+                config['is_verified'] = True
+                with open(self.config_file, 'w') as f:
+                    yaml.dump(config, f)
+                self.log.success('Mail adresi başarıyla doğrul"andı.')
             elif response['state'] == 401:
                 self.log.error(message='Mail adresiniz yetkili değil!')
                 self.log.get_exit()
