@@ -5,8 +5,6 @@ import signal
 import sys
 import traceback
 import yaml
-import getpass
-
 from log import Log
 from farm import Farm
 from volunteer import Volunteer
@@ -80,7 +78,6 @@ if __name__ == "__main__":
     parser.add_argument('-m', '--memory', action='store', dest='memory_limit', default=50, type=int)
     parser.add_argument('-c', '--cpu', action='store', dest='cpu_set', default=1, type=int)
     parser.add_argument('-e', '--email', action='store', dest='email', default=None, type=str)
-    parser.add_argument('-p', '--password', action='store', dest='password', default=None, type=str)
     parser.add_argument('-j', '--job', action='store', dest='job', default=5, type=int)
 
     args = parser.parse_args()
@@ -112,7 +109,6 @@ if __name__ == "__main__":
         args.email = saved_email
         log.information(f'Kayıtlı mail adresi kullanılıyor: {saved_email}')
 
-    #print(args)
 
     #farm = Farm('https://ciftlik.pisilinux.org/ciftlik', args.email)
     farm = Farm('http://31.207.82.178/', args.email)
