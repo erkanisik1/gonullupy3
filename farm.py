@@ -3,6 +3,7 @@ import time
 import requests
 import yaml
 import os
+import shutil
 from log import Log
 
 
@@ -44,17 +45,21 @@ class Farm:
 
         for file in output_files:
             retry_count = 0
-            max_retries = 3
-            while retry_count < max_retries:
+            while True:  # Sonsuz döngü - dosya gönderilene kadar devam eder
                 if self.send(file, binary_path):
-                    break
+                    break  # Başarılı olursa döngüden çık
                 else:
-                    self.log.warning(message='%s dosyası tekrar gönderilmeye çalışılacak. Deneme: %d' % (file, retry_count + 1))
-                    self.wait()
                     retry_count += 1
-            else:
-                self.log.error(message='%s dosyası gönderilemedi!' % file)
-                return False
+                    self.log.warning(message='%s dosyası tekrar gönderilmeye çalışılacak. Deneme: %d' % (file, retry_count + 1), continued=True)
+                    self.wait()
+        
+        # Tüm dosyalar başarıyla gönderildikten sonra /tmp/gonullu dizinini temizle
+        try:
+            shutil.rmtree('/tmp/gonullu', ignore_errors=True)
+            self.log.success('Tüm dosyalar gönderildi, /tmp/gonullu dizini temizlendi.')
+        except Exception as e:
+            self.log.warning('Dizin temizlenirken hata oluştu: %s' % str(e))
+        
         return True
 
     def send(self, file, binary_path):
