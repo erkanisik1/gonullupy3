@@ -5,6 +5,7 @@ import signal
 import sys
 import traceback
 import yaml
+import shutil
 from log import Log
 from farm import Farm
 from volunteer import Volunteer
@@ -56,6 +57,12 @@ def main(log_main, volunteer_main, farm_main):
                         )
                         log_main.blank_line()
                         farm_main.wait(reset=True)
+                        # Tüm işlemler bittikten sonra /tmp/gonullu dizinini temizle
+                        try:
+                            shutil.rmtree('/tmp/gonullu', ignore_errors=True)
+                            log_main.success('/tmp/gonullu dizini temizlendi.')
+                        except Exception as e:
+                            log_main.warning('Temizlik sırasında hata: %s' % str(e))
                     break
                 else:
                     # container bulundu. İşlem sürüyor.
@@ -111,10 +118,11 @@ if __name__ == "__main__":
 
 
     #farm = Farm('https://ciftlik.pisilinux.org/ciftlik', args.email)
-    farm = Farm('http://31.207.82.178/', args.email)
+    farm = Farm('http://31.207.82.178', args.email)
     volunteer = Volunteer(args)
 
     try:
+        shutil.rmtree('/tmp/gonullu', ignore_errors=True)
         os.system("stty -echo")
         main(log, volunteer, farm)
     except SystemExit as e:

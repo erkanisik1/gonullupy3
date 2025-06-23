@@ -52,14 +52,7 @@ class Farm:
                     retry_count += 1
                     self.log.warning(message='%s dosyası tekrar gönderilmeye çalışılacak. Deneme: %d' % (file, retry_count + 1), continued=True)
                     self.wait()
-        
-        # Tüm dosyalar başarıyla gönderildikten sonra /tmp/gonullu dizinini temizle
-        try:
-            shutil.rmtree('/tmp/gonullu', ignore_errors=True)
-            self.log.success('Tüm dosyalar gönderildi, /tmp/gonullu dizini temizlendi.')
-        except Exception as e:
-            self.log.warning('Dizin temizlenirken hata oluştu: %s' % str(e))
-        
+        # Temizlik kodu kaldırıldı
         return True
 
     def send(self, file, binary_path):

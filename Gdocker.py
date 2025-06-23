@@ -1,6 +1,7 @@
 import json
 import random
 import shutil
+import time
 
 import psutil
 from docker import client
@@ -51,11 +52,16 @@ class Docker:
             self.log.information(message='İmaj son sürüme güncellendi')
 
         # my_container ile konteynırımızı oluşturuyoruz ve onda saklıyoruz.
-        self.my_container = self.my_client.create_container(image=self.image, command=self.command, name=self.name,
-                                                            volumes=self.volumes,
-                                                            host_config=self.host_config)
-        # ve konteynırımızı çalıştırmaya başlıyoruz.
-        self.my_client.start(self.name)
+        try:
+            self.my_container = self.my_client.create_container(image=self.image, command=self.command, name=self.name,
+                                                                volumes=self.volumes,
+                                                                host_config=self.host_config)
+            # ve konteynırımızı çalıştırmaya başlıyoruz.
+            self.my_client.start(self.name)
+        except Exception as e:
+            self.log.error('Container oluşturma/başlatma hatası: %s' % str(e))
+            self.log.error('Container adı: %s, Image: %s, Command: %s' % (self.name, self.image, self.command))
+            raise
 
     def pause(self):
         # containerımızı durdurmak için çalıştıracağımız fonksiyonumuz.
@@ -94,12 +100,22 @@ class Docker:
         dictionary_len = len(dictionary)
         self.package_name = name
         self.name = ''
+        
+        # Paket adından geçerli container adı oluştur
         for i in name:
-            if i not in dictionary:
-                i = dictionary[random.randint(1, dictionary_len)]
-            self.name += str(i)
-        if len(self.name) == 1:
+            if i in dictionary:
+                self.name += str(i)
+            else:
+                self.name += dictionary[random.randint(0, dictionary_len-1)]
+        
+        # Container adı en az 2 karakter olmalı
+        if len(self.name) < 2:
             self.name += "_"
+        
+        # Container adına timestamp ekle (benzersizlik için)
+        self.name += "_" + str(int(time.time()))[-6:]
+        
+        self.log.information('Container adı oluşturuldu: %s' % self.name)
 
     @staticmethod
     def set_memory_limit(memory_limit):
