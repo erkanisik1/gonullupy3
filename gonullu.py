@@ -71,10 +71,20 @@ def main(log_main, volunteer_main, farm_main):
 
 if __name__ == "__main__":
     log = Log()
+    
+    # Global değişkenler signal handler için
+    global_volunteer = None
 
     # Sinyal yönetimini ayarla
     def signal_handler(signum, frame):
         print("\nProgram sonlandırılıyor...")
+        if global_volunteer:
+            try:
+                log.information("Çalışan Docker container'ı durduruluyor...")
+                global_volunteer.remove()
+                log.success("Docker container başarıyla durduruldu.")
+            except Exception as e:
+                log.warning("Container durdurulurken hata: %s" % str(e))
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -124,6 +134,7 @@ if __name__ == "__main__":
     try:
         shutil.rmtree('/tmp/gonullu', ignore_errors=True)
         os.system("stty -echo")
+        global_volunteer = volunteer
         main(log, volunteer, farm)
     except SystemExit as e:
         # Program düzgün şekilde sonlandırıldı

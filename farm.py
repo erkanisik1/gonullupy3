@@ -20,7 +20,7 @@ class Farm:
     def get(self, request, json=True):
         # Get isteğini işleyip json data dönen fonksiyonumuz.
         try:
-            response = requests.get('%s/%s' % (self.url, request))
+            response = requests.get('%s/%s' % (self.url, request), timeout=(30, 300))
             response.raise_for_status()  # HTTP hatalarını yakalamak için
             if json:
                 self.total_error_time = 10
